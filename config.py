@@ -4,10 +4,10 @@ from transformers import TrainingArguments, EarlyStoppingCallback
 class Config:
     # Data
     DEBUG = False
-    RESULT_DIR = "results"
-    RAW_DATA_DIR = "dataset"
     LOAD_PROCESSED_DATASET = True
-    NUM_VALUE_BINS = 10
+    OUTPUT_DIR = "results"
+    RAW_DATA_DIR = "dataset"
+    NUM_VALUE_BINS = 10  # number of quantiles to bin float values to int tokens
     NUM_ADDED_TOKENS = 4  # {"pad": 0, "mask"/"unk": 1, "bos": 2, "eos": 3}
     
     # Training
@@ -18,8 +18,8 @@ class Config:
         ),
     ]
     TRAINING_ARGUMENTS = TrainingArguments(
-        output_dir=RESULT_DIR,
-        logging_dir=os.path.join(RESULT_DIR, "logs"),
+        output_dir=OUTPUT_DIR,
+        logging_dir=os.path.join(OUTPUT_DIR, "logs"),
         eval_strategy="steps",
         save_strategy="steps",
         logging_steps=10,
@@ -28,8 +28,8 @@ class Config:
         save_total_limit=1,
         bf16=True,
         learning_rate=1e-4,
-        per_device_train_batch_size=8,
-        per_device_eval_batch_size=16,
+        per_device_train_batch_size=16,
+        per_device_eval_batch_size=32,
         num_train_epochs=1000 if not DEBUG else 1,
         load_best_model_at_end=True,
         metric_for_best_model="monitored_metric",
@@ -37,7 +37,7 @@ class Config:
     )
     
     # Model
-    LM_TYPE = "causal"  # "masked", "causal"
+    LM_TYPE = "masked"  # "masked", "causal"
     LM_PRETRAINING = "general"  # "general", "healthcare"
     LM_ID = 0  # 0, 1, 2
     POSSIBLE_MODELS = {

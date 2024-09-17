@@ -1,10 +1,10 @@
 import numpy as np
 from sklearn.metrics import classification_report
-from config import Config as cfg
 from pprint import pprint
+from config import Config as cfg
 from transformers import Trainer
-from model_utils import PatientMLMModel
-from data_utils import PatientDataCollatorForLanguageModelling, create_patient_dataset
+from model_utils import PatientMLMModel, PatientDataCollatorForLanguageModelling
+from data_utils import create_patient_dataset
 
 
 def main():
@@ -49,7 +49,6 @@ def main():
     
     # Train the model
     trainer.train()
-    # save_model(model, os.path.join(cfg.RESULT_DIR, "model.safetensors"))
     
     # Evaluate the model
     results = trainer.evaluate(eval_dataset=dataset["test"])
@@ -60,13 +59,16 @@ def main():
 def compute_metrics_fn(eval_pred):
     """ Function for evaluating model trained for MLM
     """
-    # Extract and flatten 
+    # Extract prediction and labels
     logits, labels = eval_pred
+    if isinstance(logits, tuple): logits = logits[0]  # in case LM returns more
     predictions = np.argmax(logits, axis=-1)
+    
+    # Flatten predictions and labels for evaluation
     predictions = predictions.flatten()
     labels = labels.flatten()
     
-    # Filer out all tokens where label is -100 (coding for padded tokens)
+    # Filter out all tokens where label is -100 (coding for padded tokens)
     mask = labels != -100
     filtered_predictions = predictions[mask]
     filtered_labels = labels[mask]
@@ -76,13 +78,14 @@ def compute_metrics_fn(eval_pred):
         y_true=filtered_labels,
         y_pred=filtered_predictions,
         output_dict=True,
+        zero_division=0,
     )
     
-    # Label the metric of interest
+    # Label the metric of interest for optional stopping
     report["monitored_metric"] = report["macro avg"]["f1-score"]
     
     return report
     
-
+    
 if __name__ == "__main__":
     main()

@@ -1,3 +1,4 @@
+import random
 import torch
 import torch.nn as nn
 from transformers import (
@@ -8,6 +9,9 @@ from transformers.modeling_outputs import (
     MaskedLMOutput,
     CausalLMOutput,
 )
+from transformers.data.data_collator import DataCollatorMixin
+from torch.nn.utils.rnn import pad_sequence
+from dataclasses import dataclass
 from typing import Union, Optional
 
 
@@ -57,8 +61,7 @@ class PatientMLMModel(nn.Module):
         # value_embedding_weights = self.embedding_layer.value_embedding.weight
         # self.llm.cls.predictions.decoder.weight = value_embedding_weights
         
-    @staticmethod
-    def _reset_weights_fn(module: nn.Module) -> None:
+    def _reset_weights_fn(self, module: nn.Module) -> None:
         """ Make any weight or bias parameter contiguous and untie any shared
             weights in a module by cloning the contiguous parameters
         """
@@ -68,7 +71,12 @@ class PatientMLMModel(nn.Module):
             if hasattr(module, "bias") and module.bias is not None:
                 module.bias = nn.Parameter(module.bias.contiguous().clone())
         except RuntimeError:
-            print("Module %s was not reset!" % module._get_name())
+            if not hasattr(self, "already_printed_warnings"):
+                self.already_printed_warnings = set()
+            warning = "Module %s was not reset!" % module._get_name()
+            if warning not in self.already_printed_warnings:
+                print(warning)
+            self.already_printed_warnings.add(warning)
             
     def forward(
         self,
@@ -158,4 +166,127 @@ class PatientEmbedding(nn.Module):
         combined_embeddings = self.dropout(combined_embeddings)
         
         return combined_embeddings
+
+
+@dataclass
+class PatientDataCollatorForLanguageModelling(DataCollatorMixin):
+    """ Data collator used for the PatientEmbedding-based language model
+        Modified from transformers.data.data_collator.py
     
+    Args:
+        mlm (bool): whether or not to use masked language modeling
+        mlm_probability(float): probability with which tokens are mask randomly
+    """
+    mlm: bool=True
+    mask_id: int=1
+    pad_id: int=0
+    bos_id: int=2
+    eos_id: int=3
+    num_tokens_max: int=512
+    num_mlm_labels: Optional[int]=None
+    mlm_probability: float=0.15
+    return_tensors: str="pt"
+    
+    def torch_call(
+        self,
+        samples: list[dict[str, torch.Tensor]]
+    ) -> dict[str, torch.Tensor]:
+        """ Collate patient embedding samples and create mlm labels for training
+        """
+        # Control each sample for sequence length and add bos / eos token ids
+        effective_num_token_max = self.num_tokens_max - 2   # for bos and eos tokens
+        for batch_idx, _ in enumerate(samples):
+            seq_len = next(iter(samples[batch_idx].values())).shape[0]
+            if seq_len > effective_num_token_max:
+                
+                # Randomly select a starting index for slicing
+                start_idx = random.randint(0, seq_len - effective_num_token_max)
+                end_idx = start_idx + effective_num_token_max
+                
+                # Slice all tensors in the sample by keys (with the same slicing)
+                for data_key in samples[batch_idx]:
+                    random_slice = samples[batch_idx][data_key][start_idx:end_idx]
+                    samples[batch_idx][data_key] = random_slice
+        
+        # Add token ids for beginning and end of sequence
+        for batch_idx, _ in enumerate(samples):
+            for data_key in samples[batch_idx]:
+                to_enclose = samples[batch_idx][data_key]
+                enclosed = self.add_bos_eos_ids(to_enclose, data_key)
+                samples[batch_idx][data_key] = enclosed
+                
+        # Create batch object by padding time, value, and type sequences
+        times = [e["times"] for e in samples]
+        values = [e["values"] for e in samples]
+        types = [e["types"] for e in samples]
+        batch = {
+            "times": pad_sequence(times, batch_first=True, padding_value=0.0),
+            "values": pad_sequence(values, batch_first=True, padding_value=0),
+            "types": pad_sequence(types, batch_first=True, padding_value=0),
+        }
+        
+        # Mask values and record original values as labels if MLM is used
+        if self.mlm:
+            assert self.num_mlm_labels is not None, "Define the number of labels for mlm"
+            batch["values"], batch["labels"] = self.masked_modelling(batch["values"])
+        
+        # If MLM is not used, causal language modelling labels are generated 
+        else:
+            batch["labels"] = self.causal_modelling(batch["values"])
+        
+        return batch
+        
+    def add_bos_eos_ids(
+        self,
+        sequence: torch.Tensor,
+        data_key: str,
+    ) -> torch.Tensor:
+        """ Add bos and eos token ids or first and last time to a sequence
+            given the data it contains
+        """
+        if data_key == "times":
+            to_add = [sequence[0].unsqueeze(0), sequence[-1].unsqueeze(0)]
+        else:
+            to_add = [torch.tensor([self.bos_id]), torch.tensor([self.eos_id])]
+        
+        return torch.cat([to_add[0], sequence, to_add[-1]], dim=0)
+    
+    def masked_modelling(
+        self,
+        inputs: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """ Prepare masked tokens inputs and labels for masked language modeling
+            Modified from transformers.data.data_collator.py
+        """
+        # Prepare labels and mask array
+        labels = inputs.clone()  # labels are the unmasked version of inputs
+        probability_matrix = torch.full(labels.shape, self.mlm_probability)
+        
+        # Sample tokens in each sequence for mlm training, using mlm_probability
+        probability_matrix.masked_fill_(labels == self.pad_id, value=0.0)  # ignore pad tokens
+        masked_indices = torch.bernoulli(probability_matrix).bool()
+        labels[~masked_indices] = -100  # special code to only compute loss on masked tokens
+        
+        # 80% of the time, replace masked input tokens with mask token
+        indices_replaced = torch.bernoulli(torch.full(labels.shape, 0.8)).bool() & masked_indices
+        inputs[indices_replaced] = self.mask_id
+        
+        # 10% of the time, replace masked input tokens with random word
+        indices_random = torch.bernoulli(torch.full(labels.shape, 0.5)).bool() & masked_indices & ~indices_replaced
+        random_words = torch.randint(self.num_mlm_labels, labels.shape, dtype=torch.long)
+        inputs[indices_random] = random_words[indices_random]
+        
+        return inputs, labels
+    
+    def causal_modelling(
+        self,
+        inputs: torch.Tensor,
+    ) -> torch.Tensor:
+        """ Prepare labels for causal language modeling by shifting tokens to the right
+            Modified from transformers.data.data_collator.py
+        """
+        labels = inputs.clone()
+        if self.pad_id is not None:
+            labels[labels == self.pad_id] = -100
+        
+        return labels
