@@ -102,7 +102,7 @@ class PatientMLMModel(nn.Module):
         patient_embeddings = self.embedding_layer(times, values, types)
         
         # Forward to the LLM model using inputs_embeds
-        output = self.llm(
+        return self.llm(
             input_ids=None,  # inputs_embeds is used instead
             inputs_embeds=patient_embeddings,
             labels=labels,
@@ -113,8 +113,6 @@ class PatientMLMModel(nn.Module):
             return_dict=return_dict,
         )
         
-        return output
-
 
 class PatientEmbedding(nn.Module):
     def __init__(
@@ -178,8 +176,8 @@ class PatientDataCollatorForLanguageModelling(DataCollatorMixin):
         mlm_probability(float): probability with which tokens are mask randomly
     """
     mlm: bool=True
-    mask_id: int=1
     pad_id: int=0
+    mask_id: int=1
     bos_id: int=2
     eos_id: int=3
     num_tokens_max: int=512
@@ -220,9 +218,9 @@ class PatientDataCollatorForLanguageModelling(DataCollatorMixin):
         values = [e["values"] for e in samples]
         types = [e["types"] for e in samples]
         batch = {
-            "times": pad_sequence(times, batch_first=True, padding_value=0.0),
-            "values": pad_sequence(values, batch_first=True, padding_value=0),
-            "types": pad_sequence(types, batch_first=True, padding_value=0),
+            "times": pad_sequence(times, batch_first=True, padding_value=float(self.pad_id)),
+            "values": pad_sequence(values, batch_first=True, padding_value=self.pad_id),
+            "types": pad_sequence(types, batch_first=True, padding_value=self.pad_id),
         }
         
         # Mask values and record original values as labels if MLM is used
@@ -263,7 +261,7 @@ class PatientDataCollatorForLanguageModelling(DataCollatorMixin):
         probability_matrix = torch.full(labels.shape, self.mlm_probability)
         
         # Sample tokens in each sequence for mlm training, using mlm_probability
-        probability_matrix.masked_fill_(labels == self.pad_id, value=0.0)  # ignore pad tokens
+        probability_matrix.masked_fill_(labels == self.pad_id, value=0.0)  # pad tokens never masked
         masked_indices = torch.bernoulli(probability_matrix).bool()
         labels[~masked_indices] = -100  # special code to only compute loss on masked tokens
         

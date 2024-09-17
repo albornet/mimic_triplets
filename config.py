@@ -23,12 +23,14 @@ class Config:
         eval_strategy="steps",
         save_strategy="steps",
         logging_steps=10,
+        warmup_steps=100,
         eval_steps=100,
         save_steps=100,
         save_total_limit=1,
         bf16=True,
-        learning_rate=1e-4,
-        per_device_train_batch_size=16,
+        learning_rate=5e-5,
+        weight_decay=0.01,
+        per_device_train_batch_size=32,
         per_device_eval_batch_size=32,
         num_train_epochs=1000 if not DEBUG else 1,
         load_best_model_at_end=True,
@@ -38,31 +40,31 @@ class Config:
     
     # Model
     LM_TYPE = "masked"  # "masked", "causal"
-    LM_PRETRAINING = "general"  # "general", "healthcare"
+    LM_PRETRAINING = "healthcare"  # "general", "healthcare"
     LM_ID = 0  # 0, 1, 2
     POSSIBLE_MODELS = {
         "masked": {
             "general": [
                 "bert-base-uncased",
                 "roberta-base",
-                "distilbert-base-uncased"
+                "distilbert-base-uncased",
             ],
             "healthcare": [
+                "microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext",
                 "emilyalsentzer/Bio_ClinicalBERT",
                 "dmis-lab/biobert-base-cased-v1.1",
-                "bionlp/bluebert_pubmed_mimic_uncased_L-12_H-768_A-12"
             ]
         },
         "causal": {
             "general": [
                 "gpt2",
                 "distilgpt2",
-                "EleutherAI/gpt-neo-2.7B"
+                "EleutherAI/gpt-neo-2.7B",
             ],
             "healthcare": [
                 "microsoft/BioGPT",
                 "lucadiliello/clinical-gpt",
-                "stanford-crfm/pubmedgpt"
+                "stanford-crfm/pubmedgpt",
             ]
         }
     }
