@@ -15,16 +15,23 @@ def main():
         raw_data_dir=cfg.RAW_DATA_DIR,
         load_processed_dataset=cfg.LOAD_PROCESSED_DATASET,
         num_value_bins=cfg.NUM_VALUE_BINS,
+        num_added_tokens=cfg.NUM_ADDED_TOKENS,
         debug=cfg.DEBUG,
     )
     
     # Initialize model
-    num_value_tokens = cfg.NUM_VALUE_BINS + 2  # pad = 0, mask = -1
-    num_type_tokens = len(feature_types_vocab) + 2  # pad = 0, unk = -1
-    model = PatientMLMModel(cfg.ORIGINAL_MODEL_ID, num_value_tokens, num_type_tokens)
+    num_value_tokens = cfg.NUM_VALUE_BINS + cfg.NUM_ADDED_TOKENS
+    num_type_tokens = len(feature_types_vocab) + cfg.NUM_ADDED_TOKENS
+    model = PatientMLMModel(
+        original_model_id=cfg.ORIGINAL_MODEL_ID,
+        language_model_type=cfg.LM_TYPE,
+        num_value_tokens=num_value_tokens,
+        num_type_tokens=num_type_tokens,
+    )
     
     # Initialize data collator, which also implements MLM for "values" field
     data_collator = PatientDataCollatorForLanguageModelling(
+        mlm=True if cfg.LM_TYPE == "masked" else False,
         num_mlm_labels=cfg.NUM_VALUE_BINS,
         num_tokens_max=model.num_tokens_max,
     )

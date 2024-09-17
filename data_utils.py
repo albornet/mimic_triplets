@@ -21,6 +21,8 @@ def main():
     dataset, feature_type_vocab = create_patient_dataset(
         raw_data_dir=cfg.RAW_DATA_DIR,
         load_processed_dataset=cfg.LOAD_PROCESSED_DATASET,
+        num_value_bins=cfg.NUM_VALUE_BINS,
+        num_added_tokens=cfg.NUM_ADDED_TOKENS,
         debug=cfg.DEBUG
     )
     import ipdb; ipdb.set_trace()
@@ -30,6 +32,7 @@ def create_patient_dataset(
     raw_data_dir: str,
     load_processed_dataset: bool,
     num_value_bins: int,
+    num_added_tokens: int,
     debug: bool=False,
 ) -> Dataset:
     """ Load or create and save a huggingface patient dataset
@@ -57,10 +60,10 @@ def create_patient_dataset(
         t for split, data in dataset.items() if split in ["train", "validation"]
         for sample in data for t in sample["types"]
     ])
-    type_vocab = {k: v + 2 for v, k in enumerate(all_types)}  # adding space for pad (0) and unk (1) tokens
+    type_vocab = {k: v + num_added_tokens for v, k in enumerate(all_types)}
     
     # Format dataset to huggingface format, but with input_embed as input
-    dataset, bin_edges_by_type = bin_values_by_type(dataset, num_value_bins)
+    dataset, bin_edges_by_type = bin_values_by_type(dataset, num_value_bins, num_added_tokens)
     dataset = dataset.map(partial(encode_fn, type_vocab=type_vocab))
     dataset.set_format(type="torch", columns=["times", "values", "types"])
     
@@ -70,6 +73,7 @@ def create_patient_dataset(
 def bin_values_by_type(
     dataset: DatasetDict,
     num_value_bins: int,
+    num_added_tokens: int,
 ) -> DatasetDict:
     """ Post-processing a huggingface dataset dictionary to bin values by
         quantiles computed over each feature type
@@ -101,7 +105,7 @@ def bin_values_by_type(
         for value, type_ in zip(values, types):
             bin_edges = bin_edges_by_type[type_]  # defined outside function space
             bin_index = np.digitize(value, bin_edges, right=True)  # intervals include right bin_edges
-            binned_values.append(bin_index + 2)  # adding space for pad (0) and mask (1) tokens
+            binned_values.append(bin_index + num_added_tokens)
         
         return {"times": times, "values": binned_values, "types": types}
     
@@ -255,8 +259,8 @@ class PatientDataCollatorForLanguageModelling(DataCollatorMixin):
     mlm: bool=True
     mask_id: int=1
     pad_id: int=0
-    # bos_id: int=-2
-    # eos_id: int=-3
+    bos_id: int=2
+    eos_id: int=3
     num_tokens_max: int=512
     num_mlm_labels: Optional[int]=None
     mlm_probability: float=0.15
@@ -268,21 +272,28 @@ class PatientDataCollatorForLanguageModelling(DataCollatorMixin):
     ) -> dict[str, torch.Tensor]:
         """ Collate patient embedding samples and create mlm labels for training
         """
-        # Control each sample for sequence length
+        # Control each sample for sequence length and add bos / eos token ids
+        effective_num_token_max = self.num_tokens_max - 2   # for bos and eos tokens
         for batch_idx, _ in enumerate(samples):
-            
             seq_len = next(iter(samples[batch_idx].values())).shape[0]
-            if seq_len > self.num_tokens_max:
+            if seq_len > effective_num_token_max:
                 
                 # Randomly select a starting index for slicing
-                start_idx = random.randint(0, seq_len - self.num_tokens_max)
-                end_idx = start_idx + self.num_tokens_max
+                start_idx = random.randint(0, seq_len - effective_num_token_max)
+                end_idx = start_idx + effective_num_token_max
                 
                 # Slice all tensors in the sample by keys (with the same slicing)
-                for key in samples[batch_idx]:
-                    random_slice = samples[batch_idx][key][start_idx:end_idx]
-                    samples[batch_idx][key] = random_slice
-                    
+                for data_key in samples[batch_idx]:
+                    random_slice = samples[batch_idx][data_key][start_idx:end_idx]
+                    samples[batch_idx][data_key] = random_slice
+        
+        # Add token ids for beginning and end of sequence
+        for batch_idx, _ in enumerate(samples):
+            for data_key in samples[batch_idx]:
+                to_enclose = samples[batch_idx][data_key]
+                enclosed = self.add_bos_eos_ids(to_enclose, data_key)
+                samples[batch_idx][data_key] = enclosed
+                
         # Create batch object by padding time, value, and type sequences
         times = [e["times"] for e in samples]
         values = [e["values"] for e in samples]
@@ -298,12 +309,31 @@ class PatientDataCollatorForLanguageModelling(DataCollatorMixin):
             assert self.num_mlm_labels is not None, "Define the number of labels for mlm"
             batch["values"], batch["labels"] = self.torch_mask_tokens(batch["values"])
         
+        # If MLM is not used, causal language modelling labels are generated 
+        else:
+            batch["labels"] = self.torch_shift_tokens(batch["values"])
+        
         return batch
+        
+    def add_bos_eos_ids(
+        self,
+        sequence: torch.Tensor,
+        data_key: str,
+    ) -> torch.Tensor:
+        """ Add bos and eos token ids or first and last time to a sequence
+            given the data it contains
+        """
+        if data_key == "times":
+            to_add = [sequence[0].unsqueeze(0), sequence[-1].unsqueeze(0)]
+        else:
+            to_add = [torch.tensor([self.bos_id]), torch.tensor([self.eos_id])]
+        
+        return torch.cat([to_add[0], sequence, to_add[-1]], dim=0)
     
     def torch_mask_tokens(
         self,
         inputs: torch.Tensor,
-    ) -> tuple[Any, Any]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """ Prepare masked tokens inputs/labels for masked language modeling
             Modified from transformers.data.data_collator.py
         """
@@ -327,7 +357,19 @@ class PatientDataCollatorForLanguageModelling(DataCollatorMixin):
         
         return inputs, labels
     
+    def torch_shift_tokens(
+        self,
+        inputs: torch.Tensor,
+    ) -> torch.Tensor:
+        """ Prepare labels for causal language modeling by shifting tokens to the right
+        """
+        labels = torch.full(inputs.shape, self.pad_id, dtype=inputs.dtype)
+        labels[..., 1:] = inputs[..., :-1].clone()  # right shift
+        labels[..., 0] = self.bos_id  # now first and second token of labels are bos_id (not sure if good?)
+        
+        return labels
     
+            
 if __name__ == "__main__":
     main()
     

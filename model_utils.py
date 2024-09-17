@@ -15,12 +15,19 @@ class PatientMLMModel(nn.Module):
     def __init__(
         self,
         original_model_id: str,
+        language_model_type: str,
         num_value_tokens: int,
         num_type_tokens: int,
     ):
         super().__init__()
+        assert language_model_type in ["masked", "causal"],\
+            "language_model_type must be masked or causal"
+        
         # Initialize LLM from an original pre-trained model
-        self.llm = AutoModelForMaskedLM.from_pretrained(original_model_id)
+        if language_model_type == "masked":
+            self.llm = AutoModelForMaskedLM.from_pretrained(original_model_id)
+        elif language_model_type == "causal":
+            self.llm = AutoModelForCausalLM.from_pretrained(original_model_id)
         self.hidden_size = self.llm.config.hidden_size
         self.num_tokens_max = self.llm.config.max_position_embeddings
         
@@ -33,11 +40,15 @@ class PatientMLMModel(nn.Module):
         
         # Modify the MLM head (classifier) to match the number of value tokens
         self.llm.config.vocab_size = num_value_tokens
-        self.llm.cls.predictions.decoder = nn.Linear(
+        new_decoder_layer = nn.Linear(
             in_features=self.hidden_size, 
             out_features=num_value_tokens,
             bias=True,
         )
+        if language_model_type == "masked":
+            self.llm.cls.predictions.decoder = new_decoder_layer
+        elif language_model_type == "causal":
+            self.llm.lm_head = new_decoder_layer
         
         # Make all weights contiguous and untie any tied weight
         self.apply(self._reset_weights_fn)  # "apply" is recursive
@@ -51,11 +62,14 @@ class PatientMLMModel(nn.Module):
         """ Make any weight or bias parameter contiguous and untie any shared
             weights in a module by cloning the contiguous parameters
         """
-        if hasattr(module, "weight") and module.weight is not None:
-            module.weight = nn.Parameter(module.weight.contiguous().clone())
-        if hasattr(module, "bias") and module.bias is not None:
-            module.bias = nn.Parameter(module.bias.contiguous().clone())
-        
+        try:
+            if hasattr(module, "weight") and module.weight is not None:
+                module.weight = nn.Parameter(module.weight.contiguous().clone())
+            if hasattr(module, "bias") and module.bias is not None:
+                module.bias = nn.Parameter(module.bias.contiguous().clone())
+        except RuntimeError:
+            print("Module %s was not reset!" % module._get_name())
+            
     def forward(
         self,
         times: torch.Tensor,
@@ -67,7 +81,7 @@ class PatientMLMModel(nn.Module):
         output_attentions: Optional[bool]=None,
         output_hidden_states: Optional[bool]=None,
         return_dict: Optional[bool]=None,
-    ) -> Union[MaskedLMOutput, tuple[torch.Tensor, ...]]:
+    ) -> Union[MaskedLMOutput, CausalLMOutput, tuple[torch.Tensor, ...]]:
         """ Masked LM forward function adapted for patient embeddings
         
         labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
@@ -80,7 +94,7 @@ class PatientMLMModel(nn.Module):
         patient_embeddings = self.embedding_layer(times, values, types)
         
         # Forward to the LLM model using inputs_embeds
-        return self.llm(
+        output = self.llm(
             input_ids=None,  # inputs_embeds is used instead
             inputs_embeds=patient_embeddings,
             labels=labels,
@@ -90,6 +104,8 @@ class PatientMLMModel(nn.Module):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
+        
+        return output
 
 
 class PatientEmbedding(nn.Module):
