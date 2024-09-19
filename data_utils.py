@@ -30,7 +30,7 @@ def create_patient_dataset(
     num_value_bins: int,
     num_added_tokens: int,
     debug: bool=False,
-) -> Dataset:
+) -> tuple[DatasetDict, dict[str, int], dict[str, np.ndarray]]:
     """ Load or create and save a huggingface patient dataset
     
     Returns:

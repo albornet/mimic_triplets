@@ -15,13 +15,14 @@ from dataclasses import dataclass
 from typing import Union, Optional
 
 
-class PatientMLMModel(nn.Module):
+class PatientEmbeddingModel(nn.Module):
     def __init__(
         self,
         original_model_id: str,
         language_model_type: str,
         num_value_tokens: int,
         num_type_tokens: int,
+        tie_embedding_to_decoder: bool=False,
     ):
         super().__init__()
         assert language_model_type in ["masked", "causal"],\
@@ -36,13 +37,13 @@ class PatientMLMModel(nn.Module):
         self.num_tokens_max = self.llm.config.max_position_embeddings
         
         # Create embedding layer and replace the LLM one to prevent incompatibility
-        self.embedding_layer = PatientEmbedding(
+        self.embedding_layer = PatientEmbeddingLayer(
             embedding_dim=self.hidden_size,
             num_value_tokens=num_value_tokens,
             num_type_tokens=num_type_tokens,
         )
         
-        # Modify the MLM head (classifier) to match the number of value tokens
+        # Modify the LLM head (classifier) to match the number of value tokens
         self.llm.config.vocab_size = num_value_tokens
         new_decoder_layer = nn.Linear(
             in_features=self.hidden_size, 
@@ -57,9 +58,13 @@ class PatientMLMModel(nn.Module):
         # Make all weights contiguous and untie any tied weight
         self.apply(self._reset_weights_fn)  # "apply" is recursive
         
-        # # Tie output decoder linear weights to input value embedding weights
-        # value_embedding_weights = self.embedding_layer.value_embedding.weight
-        # self.llm.cls.predictions.decoder.weight = value_embedding_weights
+        # Tie output decoder linear weights to input value embedding weights
+        if tie_embedding_to_decoder:
+            value_embedding_weights = self.embedding_layer.value_embedding.weight
+            if language_model_type == "masked":
+                self.llm.cls.predictions.decoder.weight = value_embedding_weights
+            elif language_model_type == "causal":
+                self.llm.lm_head.weight = value_embedding_weights
         
     def _reset_weights_fn(self, module: nn.Module) -> None:
         """ Make any weight or bias parameter contiguous and untie any shared
@@ -114,7 +119,7 @@ class PatientMLMModel(nn.Module):
         )
         
 
-class PatientEmbedding(nn.Module):
+class PatientEmbeddingLayer(nn.Module):
     def __init__(
         self,
         embedding_dim: int,
@@ -191,7 +196,7 @@ class PatientDataCollatorForLanguageModelling(DataCollatorMixin):
     ) -> dict[str, torch.Tensor]:
         """ Collate patient embedding samples and create mlm labels for training
         """
-        # Control each sample for sequence length and add bos / eos token ids
+        # Control each sample for sequence length
         effective_num_token_max = self.num_tokens_max - 2   # for bos and eos tokens
         for batch_idx, _ in enumerate(samples):
             seq_len = next(iter(samples[batch_idx].values())).shape[0]
@@ -269,8 +274,9 @@ class PatientDataCollatorForLanguageModelling(DataCollatorMixin):
         indices_replaced = torch.bernoulli(torch.full(labels.shape, 0.8)).bool() & masked_indices
         inputs[indices_replaced] = self.mask_id
         
-        # 10% of the time, replace masked input tokens with random word
+        # 10% of the time, replace masked input tokens with random value token id
         indices_random = torch.bernoulli(torch.full(labels.shape, 0.5)).bool() & masked_indices & ~indices_replaced
+        # TODO: TAKE INTO ACCOUNT RANDOM SHIFTING
         random_words = torch.randint(self.num_mlm_labels, labels.shape, dtype=torch.long)
         inputs[indices_random] = random_words[indices_random]
         

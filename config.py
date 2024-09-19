@@ -1,8 +1,9 @@
 import os
-from transformers import TrainingArguments, EarlyStoppingCallback
+from transformers import EarlyStoppingCallback
+
 
 class Config:
-    # Data
+    # Data - TODO: TURN NUM_VALUE_BINS TO DEFAULT VALUE AND MAKE IT A HYPER-PARAMETER TO TUNE WITH OPTUNA
     DEBUG = False
     LOAD_PROCESSED_DATASET = True
     OUTPUT_DIR = "results"
@@ -11,32 +12,37 @@ class Config:
     NUM_ADDED_TOKENS = 4  # {"pad": 0, "mask"/"unk": 1, "bos": 2, "eos": 3}
     
     # Training
-    CALLBACKS = [
+    NUM_TRAIN_EPOCHS = 1000
+    FIND_BEST_TRAINING_ARGUMENTS_WITH_OPTUNA = True  # True, False
+    DEFAULT_TRAINING_ARGUMENTS = dict(
+        output_dir=OUTPUT_DIR,
+        logging_dir=os.path.join(OUTPUT_DIR, "logs"),
+        eval_strategy="steps",
+        save_strategy="steps",
+        save_total_limit=1,
+        logging_steps=10,
+        eval_steps=100,
+        save_steps=100,
+        warmup_steps=100,
+        learning_rate=5e-5,
+        bf16=True,
+        weight_decay=0.01,
+        per_device_train_batch_size=64,
+        per_device_eval_batch_size=64,
+        num_train_epochs=NUM_TRAIN_EPOCHS if not DEBUG else 1,
+        load_best_model_at_end=True,
+        metric_for_best_model="monitored_metric",
+        greater_is_better=True,
+    )
+    
+    # Training utilities
+    NUM_OPTUNA_TRIALS = 100
+    TRAINER_CALLBACKS = [
         EarlyStoppingCallback(
             early_stopping_patience=4,
             early_stopping_threshold=0.01,
         ),
     ]
-    TRAINING_ARGUMENTS = TrainingArguments(
-        output_dir=OUTPUT_DIR,
-        logging_dir=os.path.join(OUTPUT_DIR, "logs"),
-        eval_strategy="steps",
-        save_strategy="steps",
-        logging_steps=10,
-        warmup_steps=100,
-        eval_steps=100,
-        save_steps=100,
-        save_total_limit=1,
-        bf16=True,
-        learning_rate=5e-5,
-        weight_decay=0.01,
-        per_device_train_batch_size=32,
-        per_device_eval_batch_size=32,
-        num_train_epochs=1000 if not DEBUG else 1,
-        load_best_model_at_end=True,
-        metric_for_best_model="monitored_metric",
-        greater_is_better=True,
-    )
     
     # Model
     LM_TYPE = "masked"  # "masked", "causal"
