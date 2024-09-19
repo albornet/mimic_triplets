@@ -1,7 +1,3 @@
-Here’s a suggested structure for your README file for the repository:
-
----
-
 # Mimic Triplets: Transformer-based Triplet Embedding for Time-Series Vital Signs
 
 This repository provides a transformer-based model for triplet embeddings on time-series vital signs measurements from the MIMIC dataset. Each measurement is represented as a triplet consisting of the time of measurement, the value, and the type of measurement. These are individually embedded and combined using a BERT-like architecture trained for Masked Language Modeling (MLM) or Causal Language Modeling (Causal LM).
