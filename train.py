@@ -4,6 +4,7 @@ import numpy as np
 import optuna
 from pprint import pprint
 from config import Config as cfg
+from datasets import DatasetDict
 from transformers import Trainer, TrainingArguments, TrainerCallback
 from model_utils import (
     PatientEmbeddingModel,
@@ -16,18 +17,11 @@ from sklearn.metrics import classification_report
 def main():
     """ Train a patient embedding model with MLM (or causal LM?)
     """
-    # Initialize dataset, model, and associated data collator
-    dataset, model, data_collator = init_patient_embedding_run()
-    
     # Define or look for the best training arguments
-    training_arguments = TrainingArguments(**cfg.DEFAULT_TRAINING_ARGUMENTS)
-    if cfg.FIND_BEST_TRAINING_ARGUMENTS_WITH_OPTUNA:
-        sampler = optuna.samplers.TPESampler()
-        study = optuna.create_study(direction="maximize", sampler=sampler)
-        study.optimize(optuna_objective_fn, n_trials=cfg.NUM_OPTUNA_TRIALS)
-        updated_training_arguments = training_arguments.to_dict()
-        updated_training_arguments.update(**study.best_params)
-        training_arguments = TrainingArguments(**updated_training_arguments)
+    num_value_bins, training_arguments = choose_hyper_parameters(cfg.USE_OPTUNA)
+        
+    # Initialize dataset, model, and associated data collator
+    dataset, model, data_collator = init_patient_embedding_run(num_value_bins)
     
     # Define trainer object
     trainer = Trainer(
@@ -47,6 +41,35 @@ def main():
     results = trainer.evaluate(eval_dataset=dataset["test"])
     print("Test evaluation results:")
     pprint(results)
+
+
+def choose_hyper_parameters(
+    use_optuna: bool=False,
+) -> tuple[int, TrainingArguments]:
+    """ Select hyper-parameters (how value binning is done and trainig arguments)
+        by running an optuna study or by selecting default values
+    """
+    # Default values
+    num_value_bins = cfg.DEFAULT_NUM_VALUE_BINS
+    training_arguments = TrainingArguments(**cfg.DEFAULT_TRAINING_ARGUMENTS)
+    
+    # Update default values with optuna study
+    if use_optuna:
+        sampler = optuna.samplers.TPESampler()
+        storage = f"sqlite:///{os.path.join(cfg.OUTPUT_DIR, 'optuna.db')}"
+        study = optuna.create_study(direction="maximize", sampler=sampler, storage=storage)
+        study.optimize(optuna_objective_fn, n_trials=cfg.NUM_OPTUNA_TRIALS)
+        
+        # Update value binning hyper-parameter
+        if "num_value_bins" in study.best_params:
+            num_value_bins = study.best_params.pop("num_value_bins")
+        
+        # Update training arguments
+        updated_training_arguments = training_arguments.to_dict()
+        updated_training_arguments.update(**study.best_params)
+        training_arguments = TrainingArguments(**updated_training_arguments)
+    
+    return num_value_bins, training_arguments
 
 
 def compute_metrics_fn(eval_pred):
@@ -81,22 +104,26 @@ def compute_metrics_fn(eval_pred):
     return report
 
 
-def init_patient_embedding_run():
+def init_patient_embedding_run(
+    num_value_bins: int,
+) -> tuple[
+    DatasetDict,
+    PatientEmbeddingModel,
+    PatientDataCollatorForLanguageModelling,
+]:
     """ Initialize dataset, model and data collator for patient embedding
-        TODO: INCLUDE NUM_VALUE_BINS AS A HYPER-PARAMETER OPTIMIZED WITH OPTUNA,
-        BUT THIS WOULD REQUIRE TO HAVE ANOTHER METRIC FUNCTION, E.G., CLUSTERING
     """
     # Initialize dataset
     dataset, feature_types_vocab, bin_edges_by_type = create_patient_dataset(
         raw_data_dir=cfg.RAW_DATA_DIR,
         load_processed_dataset=cfg.LOAD_PROCESSED_DATASET,
-        num_value_bins=cfg.NUM_VALUE_BINS,
+        num_value_bins=num_value_bins,
         num_added_tokens=cfg.NUM_ADDED_TOKENS,
         debug=cfg.DEBUG,
     )
     
     # Initialize model with correct LM type and number of embedded features
-    num_value_tokens = cfg.NUM_VALUE_BINS + cfg.NUM_ADDED_TOKENS
+    num_value_tokens = num_value_bins + cfg.NUM_ADDED_TOKENS
     num_type_tokens = len(feature_types_vocab) + cfg.NUM_ADDED_TOKENS
     model = PatientEmbeddingModel(
         original_model_id=cfg.ORIGINAL_MODEL_ID,
@@ -108,7 +135,7 @@ def init_patient_embedding_run():
     # Initialize data collator, which implements MLM or CausalLM
     data_collator = PatientDataCollatorForLanguageModelling(
         mlm=True if cfg.LM_TYPE == "masked" else False,
-        num_mlm_labels=cfg.NUM_VALUE_BINS,
+        num_mlm_labels=num_value_bins,
         num_tokens_max=model.num_tokens_max,
     )
     
@@ -117,18 +144,26 @@ def init_patient_embedding_run():
 
 def optuna_objective_fn(trial: optuna.Trial) -> float:
     """ Find the best set of hyper-parameters to train a patient embedding model
-        TODO: DEFINE HYPER-PARAMETER RANGES AS A DICT IN THE CONFIG FILE
     """
     # Hyperparameters to optimize
     new_training_parameters = {
-        "per_device_train_batch_size": trial.suggest_categorical("batch_size", [4, 8, 16, 32, 64]),
+        "per_device_train_batch_size": trial.suggest_categorical(
+            "per_device_train_batch_size", [4, 8, 16, 32, 64],
+        ),
         "learning_rate": trial.suggest_float("learning_rate", 1e-6, 1e-4, log=True),
         "weight_decay": trial.suggest_float("weight_decay", 1e-4, 1e-1, log=True),
+        "adam_beta1": trial.suggest_float("adam_beta1", 0.8, 0.99, log=True),
+        "adam_beta2": trial.suggest_float("adam_beta2", 0.9, 0.999, log=True),
+        "adam_epsilon": trial.suggest_float("adam_epsilon", 1e-8, 1e-6, log=True),
         "disable_tqdm": True,  # to avoid clutter during Optuna trials
     }
     
     # Initialize new patient embedding model and data collator
-    dataset, model, data_collator = init_patient_embedding_run()
+    if cfg.TUNE_NUM_VALUE_BINS:
+        num_value_bins = trial.suggest_int("num_value_bins", 2, 100, log=True)
+    else:
+        num_value_bins = cfg.DEFAULT_NUM_VALUE_BINS
+    dataset, model, data_collator = init_patient_embedding_run(num_value_bins)
     
     # Define training arguments
     training_arguments = dict(cfg.DEFAULT_TRAINING_ARGUMENTS)
@@ -158,10 +193,18 @@ def optuna_objective_fn(trial: optuna.Trial) -> float:
 
 
 class OptunaCallback(TrainerCallback):
+    """ Optuna-specific callback added to check if a trial is promising during
+        the run, compared to previous trials, and prune it if not
+    """
     def __init__(self, trial: optuna.Trial):
+        """ Record trial being checked
+        """
         self.trial = trial
         
     def on_evaluate(self, args, state, control, **kwargs):
+        """ When model is evaluated during training, report the metric to optuna,
+            which checks if the trial should be pruned compared to previous ones
+        """
         eval_metrics = kwargs.get("metrics", {})
         monitored_metric = eval_metrics.get("eval_monitored_metric")
         

@@ -3,17 +3,19 @@ from transformers import EarlyStoppingCallback
 
 
 class Config:
-    # Data - TODO: TURN NUM_VALUE_BINS TO DEFAULT VALUE AND MAKE IT A HYPER-PARAMETER TO TUNE WITH OPTUNA
+    """ ...
+    """
+    # Data
     DEBUG = False
     LOAD_PROCESSED_DATASET = True
     OUTPUT_DIR = "results"
     RAW_DATA_DIR = "dataset"
-    NUM_VALUE_BINS = 10  # number of quantiles to bin float values to int tokens
+    DEFAULT_NUM_VALUE_BINS = 10  # default value for number of quantiles to bin float values to int tokens
+    TUNE_NUM_VALUE_BINS = False  # with Optuna
     NUM_ADDED_TOKENS = 4  # {"pad": 0, "mask"/"unk": 1, "bos": 2, "eos": 3}
     
-    # Training
+    # Training arguments
     NUM_TRAIN_EPOCHS = 1000
-    FIND_BEST_TRAINING_ARGUMENTS_WITH_OPTUNA = True  # True, False
     DEFAULT_TRAINING_ARGUMENTS = dict(
         output_dir=OUTPUT_DIR,
         logging_dir=os.path.join(OUTPUT_DIR, "logs"),
@@ -36,6 +38,7 @@ class Config:
     )
     
     # Training utilities
+    USE_OPTUNA = True
     NUM_OPTUNA_TRIALS = 100
     TRAINER_CALLBACKS = [
         EarlyStoppingCallback(
