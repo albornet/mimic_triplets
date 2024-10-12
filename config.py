@@ -3,22 +3,51 @@ from transformers import EarlyStoppingCallback
 
 
 class Config:
-    """ ...
+    """ Class containing parameters for building the dataset and training the models
     """
-    # Data
+    # Dataset building
     DEBUG = False
-    LOAD_PROCESSED_DATASET = True
-    OUTPUT_DIR = "results"
-    RAW_DATA_DIR = "dataset"
-    DEFAULT_NUM_VALUE_BINS = 10  # default value for number of quantiles to bin float values to int tokens
-    TUNE_NUM_VALUE_BINS = False  # with Optuna
-    NUM_ADDED_TOKENS = 4  # {"pad": 0, "mask"/"unk": 1, "bos": 2, "eos": 3}
+    BUILD_PATIENT_CSV_FILES = True
+    BUILD_HUGGINGFACE_DATASET = True
+    RESULT_DIR = "results"
+    RAW_DATA_DIR = "raw_data"
+    RAW_DATA_SUBSET = "eicu"
+    PROCESSED_DATA_DIR = "processed_data"
+    PRIMARY_KEY_MAP = {
+        "eicu": "patientunitstayid",
+        "eicu_demo": "patientunitstayid",
+        "miiv": "stay_id",
+        "mimic": "icustay_id",
+        "mimic_demo": "icustay_id",
+        "hirid": "patientid",
+        "sic": "CaseID",
+    }
+    TIME_VARS_MAP_DATASET_LIST_KEYS  = {
+        "eicu": [
+            "infusionoffset", "labresultoffset", "nursingchartoffset",
+            "observationoffset", "respchartoffset", "respcarestatusoffset",
+            "intakeoutputoffset", "culturetakenoffset", "drugstartoffset", "index_var",
+        ],
+        "eicu_demo": [
+            "infusionoffset", "labresultoffset", "nursingchartoffset",
+            "observationoffset", "respchartoffset", "respcarestatusoffset",
+            "intakeoutputoffset", "culturetakenoffset", "drugstartoffset", "index_var",
+        ],
+        "miiv": ["starttime", "charttime", "index_var", "chartdate"],
+        "mimic": ["charttime", "chartdate", "index_var", "startdate", "starttime"],
+        "mimic_demo": ["charttime", "chartdate", "index_var", "startdate", "starttime"],
+        "hirid": ["givenat", "datetime", "index_var"],
+        "sic": ["OffsetOfDeath", "Offset", "index_var"],
+    }
     
     # Training arguments
+    DEFAULT_NUM_VALUE_BINS = 10  # default value for number of quantiles to bin float values to int tokens
+    TUNE_NUM_VALUE_BINS = False  # with optuna
+    NUM_ADDED_TOKENS = 4  # {"pad": 0, "mask"/"unk": 1, "bos": 2, "eos": 3}
     NUM_TRAIN_EPOCHS = 1000
     DEFAULT_TRAINING_ARGUMENTS = dict(
-        output_dir=OUTPUT_DIR,
-        logging_dir=os.path.join(OUTPUT_DIR, "logs"),
+        output_dir=RESULT_DIR,
+        logging_dir=os.path.join(RESULT_DIR, "logs"),
         eval_strategy="steps",
         save_strategy="steps",
         save_total_limit=1,

@@ -10,7 +10,7 @@ from model_utils import (
     PatientEmbeddingModel,
     PatientDataCollatorForLanguageModelling,
 )
-from data_utils import create_patient_dataset
+from data_utils import get_formatted_patient_dataset
 from sklearn.metrics import classification_report
 
 
@@ -56,7 +56,7 @@ def choose_hyper_parameters(
     # Update default values with optuna study
     if use_optuna:
         sampler = optuna.samplers.TPESampler()
-        storage = f"sqlite:///{os.path.join(cfg.OUTPUT_DIR, 'optuna.db')}"
+        storage = f"sqlite:///{os.path.join(cfg.RESULT_DIR, 'optuna.db')}"
         study = optuna.create_study(direction="maximize", sampler=sampler, storage=storage)
         study.optimize(optuna_objective_fn, n_trials=cfg.NUM_OPTUNA_TRIALS)
         
@@ -114,12 +114,9 @@ def init_patient_embedding_run(
     """ Initialize dataset, model and data collator for patient embedding
     """
     # Initialize dataset
-    dataset, feature_types_vocab, bin_edges_by_type = create_patient_dataset(
-        raw_data_dir=cfg.RAW_DATA_DIR,
-        load_processed_dataset=cfg.LOAD_PROCESSED_DATASET,
+    dataset, feature_types_vocab, bin_edges_by_type = get_formatted_patient_dataset(
         num_value_bins=num_value_bins,
         num_added_tokens=cfg.NUM_ADDED_TOKENS,
-        debug=cfg.DEBUG,
     )
     
     # Initialize model with correct LM type and number of embedded features
