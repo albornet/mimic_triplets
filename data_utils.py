@@ -222,7 +222,7 @@ def write_patient_triplet_csvs(
     
     # Determine subfolders where each patient csv file will be written
     num_patients = len(patient_features_folders)
-    num_patients_per_subfolder = 10
+    num_patients_per_subfolder = 1000
     patient_subfolder_ids = [i // num_patients_per_subfolder for i in range(num_patients)]
     patient_write_subfolders = [
         os.path.join(patient_csv_dir, f"split_{subfolder_id:03d}")
