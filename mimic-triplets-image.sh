@@ -13,6 +13,7 @@
 #SBATCH --error=./logs/singularity_build_%j.err
 
 # Check if the .sif file exists, and only remove it if it does
+mkdir -p ~/sif
 if [ -f ~/sif/mimic-triplets-image.sif ]; then
     rm ~/sif/mimic-triplets-image.sif
 fi

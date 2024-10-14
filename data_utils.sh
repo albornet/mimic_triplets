@@ -4,12 +4,12 @@
 PARTITION="shared-cpu"
 NUM_NODES=1
 NUM_TASKS=1
-TIME_LIMIT="0-00:30:00"
+TIME_LIMIT="0-00:15:00"
 TOTAL_CPU_MEMORY=64gb
 NUM_CPUS_PER_TASK=32
 
 # Script variables
-SIF_FOLDER=/home/users/b/borneta/sif
+SIF_FOLDER=~/sif
 SIF_NAME=mimic-triplets-image.sif
 SIF_IMAGE=${SIF_FOLDER}/${SIF_NAME}
 SCRIPT=data_utils.py
