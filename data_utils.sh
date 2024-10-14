@@ -24,4 +24,4 @@ sbatch --job-name=data_utils \
        --time=$TIME_LIMIT \
        --output=./results/logs/job_%j.txt \
        --error=./results/logs/job_%j.err \
-       --wrap="srun apptainer exec ${SIF_IMAGE} python ${SCRIPT} --runtype=${RUNTYPE}"
+       --wrap="srun apptainer exec ${SIF_IMAGE} python ${SCRIPT}"
