@@ -167,3 +167,4 @@ dataset/*/*.csv
 dataset/processed
 raw_data/*/*/*.csv
 processed_data
+logs/

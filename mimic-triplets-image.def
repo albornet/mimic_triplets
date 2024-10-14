@@ -1,0 +1,15 @@
+Bootstrap: docker
+From: pytorch/pytorch:2.4.1-cuda12.4-cudnn9-devel
+
+%post
+    # Install requirements
+    pip install --no-cache-dir -r /app/requirements.txt --upgrade
+
+%files
+    # Copy requirements.txt into the container
+    requirements.txt /app/
+
+%labels
+    Author alban.bornet@unige.ch
+    Version 0.1
+    Description "Mimic-triplets container"
