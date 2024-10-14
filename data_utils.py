@@ -28,8 +28,9 @@ def create_patient_dataset() -> str|None:
     # Define relevant data directories and paths
     assert cfg.RAW_DATA_SUBSET in cfg.PRIMARY_KEY_MAP, "Invalid raw data subset"
     raw_data_full_dir = os.path.join(cfg.RAW_DATA_DIR, cfg.RAW_DATA_SUBSET)
-    patient_csv_data_dir = os.path.join(cfg.PROCESSED_DATA_DIR, "patient_csvs")
-    huggingface_data_dir = os.path.join(cfg.PROCESSED_DATA_DIR, "huggingface")
+    processed_data_full_dir = os.path.join(cfg.PROCESSED_DATA_DIR, cfg.RAW_DATA_SUBSET)
+    patient_csv_data_dir = os.path.join(processed_data_full_dir, "patient_csvs")
+    huggingface_data_dir = os.path.join(processed_data_full_dir, "huggingface")
     
     # Build dataset from raw feature csv files
     if cfg.BUILD_PATIENT_CSV_FILES:

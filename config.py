@@ -8,7 +8,7 @@ class Config:
     # Dataset building
     DEBUG = False
     BUILD_PATIENT_CSV_FILES = True
-    BUILD_HUGGINGFACE_DATASET = True
+    BUILD_HUGGINGFACE_DATASET = False
     RESULT_DIR = "results"
     RAW_DATA_DIR = "raw_data"
     RAW_DATA_SUBSET = "eicu"
