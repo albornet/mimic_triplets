@@ -288,7 +288,7 @@ def extract_feature_triplets(
     else:
         if "_static_" not in file_path:
             warnings.warn("File with static data name: no '_static_'! %s" % file_path)
-        triplet_vector_list = [(0, data[col].iloc[0], col) for col in columns]
+        triplet_vector_list = [(0, col, data[col].iloc[0]) for col in columns]
         
     return triplet_vector_list
 
